@@ -1,94 +1,67 @@
-import { Stack, StackProps, Duration } from 'aws-cdk-lib';
-import { Function, Runtime, Code } from 'aws-cdk-lib/aws-lambda';
+import * as cdk from 'aws-cdk-lib';
+import * as iam from 'aws-cdk-lib/aws-iam';
+import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as lambdaNodeJs from 'aws-cdk-lib/aws-lambda-nodejs';
 import { Construct } from 'constructs';
-import * as apigateway from 'aws-cdk-lib/aws-apigatewayv2';
-import { StateMachine, StateMachineType } from 'aws-cdk-lib/aws-stepfunctions';
-import { LambdaInvoke } from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import { join } from 'path';
 
-export interface SupplyFunnelStackProps extends StackProps {
+export interface SupplyFunnelStackProps extends cdk.StackProps {
 	environmentName: string;
 }
 
-export class SupplyFunnelStack extends Stack {
+export class SupplyFunnelStack extends cdk.Stack {
 	constructor(scope: Construct, id: string, props: SupplyFunnelStackProps) {
 		super(scope, id, props);
 
 		const { environmentName } = props;
 
-		// AWS Step Function for event handling
-		const handleEventFunction = new Function(this, 'HandleEventFunction', {
-			code: Code.fromInline(`
-        exports.handler = async function(event) {
-          console.log('Event received: ', event);
-        };
-      `),
-			runtime: Runtime.NODEJS_18_X,
-			handler: 'index.handler',
-			timeout: Duration.seconds(30)
+		// Define IAM role for Lambda function
+		const lambdaRole = new iam.Role(this, 'LambdaExecutionRole', {
+			assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com')
 		});
 
-		const handleEventStateMachine = new StateMachine(
-			this,
-			'HandleEventStateMachine',
-			{
-				stateMachineName: `handleEventStateMachine-${environmentName}`,
-				definition: new LambdaInvoke(this, 'HandleEvent', {
-					lambdaFunction: handleEventFunction
-				}),
-				stateMachineType: StateMachineType.EXPRESS
-			}
+		lambdaRole.addManagedPolicy(
+			iam.ManagedPolicy.fromAwsManagedPolicyName(
+				'service-role/AWSLambdaBasicExecutionRole'
+			)
 		);
 
-		// AWS Lambda Function for webhook validation
-		const webhookHandlerLambda = new Function(
+		// Create S3 bucket
+		const s3Bucket = new s3.Bucket(this, 'SupplyFunnelBucket', {
+			removalPolicy: cdk.RemovalPolicy.RETAIN,
+			versioned: true
+		});
+
+		// Update IAM role to allow lambda to put objects in S3 bucket
+		lambdaRole.addToPolicy(
+			new iam.PolicyStatement({
+				actions: ['s3:PutObject'],
+				resources: [s3Bucket.arnForObjects('*')]
+			})
+		);
+
+		const handleEntryLambda = new lambdaNodeJs.NodejsFunction(
 			this,
-			'WebhookHandlerLambda',
+			'HandleEntryLambda',
 			{
-				code: Code.fromInline(`
-        exports.handler = async function(event) {
-          if (event.body && event.body.challenge) {
-            return {
-              statusCode: 200,
-              body: JSON.stringify({ challenge: event.body.challenge }),
-            };
-          }
-
-          const AWS = require('aws-sdk');
-          const stepFunctions = new AWS.StepFunctions();
-          await stepFunctions.startExecution({
-            stateMachineArn: '${handleEventStateMachine.stateMachineArn}',
-            input: JSON.stringify(event.body),
-          }).promise();
-
-          return { statusCode: 200 };
-        };
-      `),
-				runtime: Runtime.NODEJS_18_X,
-				handler: 'index.handler',
+				role: lambdaRole,
+				entry: join(__dirname, '../lambdas/1-entry/handle-entry.ts'),
+				handler: 'handler',
 				environment: {
-					AWS_SDK_VERSION: '3'
-				},
-				timeout: Duration.seconds(30)
+					BUCKET_NAME: s3Bucket.bucketName
+				}
 			}
 		);
-
-		// Grant Start Execution Permission to the Lambda Function
-		handleEventStateMachine.grantStartExecution(webhookHandlerLambda);
 
 		// AWS API Gateway HTTP API configuration
-		const httpApi = new HttpApi(this, 'HttpApi', {
-			apiName: `supplyFunnelApi-${environmentName}`,
-			defaultIntegration: new LambdaProxyIntegration({
-				handler: webhookHandlerLambda
-			})
+		const api = new apigateway.RestApi(this, 'HttpApi', {
+			restApiName: `supplyFunnelApi-${environmentName}`
 		});
 
-		httpApi.addRoutes({
-			path: '/',
-			methods: [HttpMethod.POST],
-			integration: new LambdaProxyIntegration({
-				handler: webhookHandlerLambda
-			})
-		});
+		const handleEntryLambdaIntegration = new apigateway.LambdaIntegration(
+			handleEntryLambda
+		);
+		api.root.addMethod('POST', handleEntryLambdaIntegration);
 	}
 }

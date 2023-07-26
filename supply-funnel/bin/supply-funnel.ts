@@ -6,5 +6,5 @@ import { SupplyFunnelStack } from '../lib/supply-funnel-stack';
 const app = new cdk.App();
 new SupplyFunnelStack(app, 'SupplyFunnelStack', {
 	environmentName: 'dev',
-	env: { account: '123456789012', region: 'us-east-1' }
+	env: { account: '438751151524', region: 'us-east-1' }
 });
