@@ -1,90 +1,68 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 
-const client = new S3Client({ region: 'us-east-1' }); // update the region if needed
+const client = new S3Client({ region: 'us-east-1' });
 const bucketName = process.env.BUCKET_NAME;
 
 export const handler = async (
 	event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-	console.log('Handle event triggered', event);
-
+	// Check for existence of event body
 	if (!event.body) {
 		throw new Error('No event body');
 	}
 
+	// Log incoming event
+	console.log('Handling incoming event', event);
+
+	// Parse the input event
 	const input = JSON.parse(event.body);
 
+	// Handle challenge events
 	if ('challenge' in input) {
-		console.log('Challenge event received!');
-		return {
-			statusCode: 200,
-			body: JSON.stringify({
-				challenge: input.challenge
-			})
-		};
+		return handleChallengeEvent(input);
 	}
 
+	// Handle create_pulse events
 	if (input.event.type === 'create_pulse') {
-		console.log('Create event received!');
-		console.log(input);
-
-		const projectName = input.event.pulseName;
-		const projectData = input.event.columnValues;
-
-		console.log('Project Name: ' + projectName);
-		console.log('Project Data: ' + JSON.stringify(projectData));
-
-		let keyValues: any = {};
-
-		for (let key in projectData) {
-			if (projectData[key].date) {
-				keyValues[key] = projectData[key].date;
-			} else if (projectData[key].text) {
-				keyValues[key] = projectData[key].text;
-			} else if (projectData[key].label && projectData[key].label.text) {
-				keyValues[key] = projectData[key].label.text;
-			} else if (projectData[key].value !== undefined) {
-				// We check with undefined since the value might be a falsy value like 0 or ""
-				keyValues[key] = projectData[key].value;
-			}
-		}
-
-		console.log(keyValues);
-
-		// Prepare data for CSV
-		let csvRaw = 'Key,Value\n'; // CSV column headers
-		for (let key in keyValues) {
-			let value = keyValues[key].toString().replace(/"/g, '""'); // Convert to string and escape any double quotes in the value
-			csvRaw += `"${key}","${value}"\n`; // Each line is a key-value pair enclosed in double quotes
-		}
-
-		console.log('Content of impactAssessmentRaw.csv:');
-		console.log(csvRaw);
-
-		const uploadRawImpactAssessment = new PutObjectCommand({
-			Bucket: bucketName,
-			Key: `${projectName}/impactAssessmentRaw.csv`,
-			Body: csvRaw,
-			ContentType: 'text/csv'
-		});
-
-		try {
-			const s3Response = await client.send(uploadRawImpactAssessment);
-			console.log(s3Response);
-		} catch (err) {
-			console.error(err);
-		}
-		console.log('Complete!');
-	} else {
-		console.log('Unknown event received!');
-		return {
-			statusCode: 400,
-			body: JSON.stringify({
-				message: 'Event not handled'
-			})
-		};
+		return await handleCreatePulseEvent(input);
 	}
+
+	// Handle unknown events
+	console.log('Unknown event received!');
+	return {
+		statusCode: 400,
+		body: JSON.stringify({
+			message: 'Event not handled'
+		})
+	};
+};
+
+const handleChallengeEvent = (input: any) => {
+	console.log('Challenge event received!');
+	return {
+		statusCode: 200,
+		body: JSON.stringify({
+			challenge: input.challenge
+		})
+	};
+};
+
+const handleCreatePulseEvent = async (input: any) => {
+	console.log('Create event received!', input);
+	const projectName = input.event.pulseName;
+	const projectData = input.event.columnValues;
+
+	// Extract and log key values
+	const keyValues = extractKeyValues(projectData);
+	console.log('Extracted Key Values:', keyValues);
+
+	// Prepare and log data for CSV
+	const csvRaw = prepareCsvData(keyValues);
+	console.log('Content of impactAssessmentRaw.csv:', csvRaw);
+
+	// Upload data to S3
+	await uploadToS3(projectName, csvRaw);
 
 	return {
 		statusCode: 200,
@@ -92,4 +70,46 @@ export const handler = async (
 			message: 'Event handled successfully'
 		})
 	};
+};
+
+const extractKeyValues = (projectData: any) => {
+	let keyValues: any = {};
+	for (let key in projectData) {
+		if (projectData[key].date) {
+			keyValues[key] = projectData[key].date;
+		} else if (projectData[key].text) {
+			keyValues[key] = projectData[key].text;
+		} else if (projectData[key].label && projectData[key].label.text) {
+			keyValues[key] = projectData[key].label.text;
+		} else if (projectData[key].value !== undefined) {
+			keyValues[key] = projectData[key].value;
+		}
+	}
+	return keyValues;
+};
+
+const prepareCsvData = (keyValues: any) => {
+	let csvRaw = 'Key,Value\n'; // CSV column headers
+	for (let key in keyValues) {
+		let value = keyValues[key].toString().replace(/"/g, '""'); // Convert to string and escape any double quotes in the value
+		csvRaw += `"${key}","${value}"\n`; // Each line is a key-value pair enclosed in double quotes
+	}
+	return csvRaw;
+};
+
+const uploadToS3 = async (projectName: string, csvRaw: string) => {
+	const uploadCommand = new PutObjectCommand({
+		Bucket: bucketName,
+		Key: `${projectName}/impactAssessmentRaw.csv`,
+		Body: csvRaw,
+		ContentType: 'text/csv'
+	});
+
+	try {
+		const s3Response = await client.send(uploadCommand);
+		console.log('Upload response:', s3Response);
+	} catch (err) {
+		console.error('Upload failed:', err);
+	}
+	console.log('Upload complete!');
 };
