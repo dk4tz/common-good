@@ -1,12 +1,8 @@
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
-import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 
-const s3Client = new S3Client({ region: 'us-east-1' });
-const sfnClient = new SFNClient({ region: 'us-east-1' }); // New
-
+const client = new S3Client({ region: 'us-east-1' });
 const bucketName = process.env.BUCKET_NAME;
-const stateMachineArn = process.env.STATE_MACHINE_ARN; // New
 
 export const handler = async (
 	event: APIGatewayProxyEvent
@@ -68,9 +64,6 @@ const handleCreatePulseEvent = async (input: any) => {
 	// Upload data to S3
 	await uploadToS3(projectName, csvRaw);
 
-	// Start the Step Functions state machine execution // New
-	await startStepFunctionsExecution(keyValues);
-
 	return {
 		statusCode: 200,
 		body: JSON.stringify({
@@ -113,26 +106,10 @@ const uploadToS3 = async (projectName: string, csvRaw: string) => {
 	});
 
 	try {
-		const s3Response = await s3Client.send(uploadCommand);
+		const s3Response = await client.send(uploadCommand);
 		console.log('Upload response:', s3Response);
 	} catch (err) {
 		console.error('Upload failed:', err);
 	}
 	console.log('Upload complete!');
-};
-
-const startStepFunctionsExecution = async (keyValues: any) => {
-	// New
-	const startExecutionCommand = new StartExecutionCommand({
-		stateMachineArn: stateMachineArn,
-		input: JSON.stringify(keyValues) // The data that will be passed to the state machine as input
-	});
-
-	try {
-		const sfnResponse = await sfnClient.send(startExecutionCommand);
-		console.log('Step Functions response:', sfnResponse);
-	} catch (err) {
-		console.error('Step Functions execution failed:', err);
-	}
-	console.log('Step Functions execution started!');
 };
