@@ -6,8 +6,6 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as lambdaNodeJs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as sfnTasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
-import * as sns from 'aws-cdk-lib/aws-sns';
-import * as subs from 'aws-cdk-lib/aws-sns-subscriptions';
 import { Construct } from 'constructs';
 import { join } from 'path';
 
@@ -24,7 +22,13 @@ export class SupplyFunnelStack extends cdk.Stack {
 
 		const { environmentName, adminEmail } = props;
 
-		// Define Role for Lambda Execution
+		// === S3 Buckets ===
+		const s3Bucket = new s3.Bucket(this, 'SupplyFunnelBucket', {
+			removalPolicy: cdk.RemovalPolicy.RETAIN,
+			versioned: true
+		});
+
+		// === Roles ===
 		const lambdaRole = new iam.Role(this, 'LambdaExecutionRole', {
 			assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com')
 		});
@@ -34,13 +38,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 			)
 		);
 
-		// Create S3 bucket to store entries
-		const s3Bucket = new s3.Bucket(this, 'SupplyFunnelBucket', {
-			removalPolicy: cdk.RemovalPolicy.RETAIN,
-			versioned: true
-		});
-
-		// Give lambda functions permissions to use the bucket
+		// === Permissions ===
 		lambdaRole.addToPolicy(
 			new iam.PolicyStatement({
 				actions: ['s3:PutObject'],
@@ -48,76 +46,118 @@ export class SupplyFunnelStack extends cdk.Stack {
 			})
 		);
 
-		// Define Lambda Functions for various tasks
-		const handleEntryLambda = this.createLambdaFunction(
-			'1-entry/handle-entry.ts',
-			'HandleEntryLambda',
+		lambdaRole.addToPolicy(
+			new iam.PolicyStatement({
+				actions: ['states:StartExecution'],
+				resources: ['*']
+			})
+		);
+		lambdaRole.addToPolicy(
+			new iam.PolicyStatement({
+				actions: ['ses:SendEmail', 'ses:SendRawEmail'],
+				resources: ['*']
+			})
+		);
+
+		// === API Gateway ===
+		const api = new apigateway.RestApi(this, 'HttpApi', {
+			restApiName: `supplyFunnelApi-${environmentName}`
+		});
+
+		// === Lambdas ===
+		const requestAdminDecisionLambda = this.createLambdaFunction(
+			'2-admin-decision/request-admin-decision.ts',
+			'RequestAdminDecisionLambda',
 			lambdaRole,
-			{ BUCKET_NAME: s3Bucket.bucketName }
+			{ ADMIN_EMAIL: adminEmail }
 		);
 		const handleApprovalLambda = this.createLambdaFunction(
-			'2-approval/handle-approval.ts',
+			'3-approval/handle-approval.ts',
 			'HandleApprovalLambda',
 			lambdaRole
 		);
 		const handleWaitlistLambda = this.createLambdaFunction(
-			'3-waitlist/handle-waitlist.ts',
+			'4-waitlist/handle-waitlist.ts',
 			'HandleWaitlistLambda',
 			lambdaRole
 		);
-		const adminChoiceLambda = this.createLambdaFunction(
-			'4-admin/admin-choice.ts',
-			'AdminChoiceLambda',
-			lambdaRole
-		);
 
-		// Create SNS Topic for Admin Notifications
-		const adminNotificationTopic = new sns.Topic(
+		// === Step Functions ===
+		const requestAdminDecisionState = new sfnTasks.LambdaInvoke(
 			this,
-			'AdminNotificationTopic'
-		);
-		adminNotificationTopic.addSubscription(
-			new subs.EmailSubscription(adminEmail)
+			'RequestAdminDecisionState',
+			{
+				lambdaFunction: requestAdminDecisionLambda,
+				integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+				payload: sfn.TaskInput.fromObject({
+					taskToken: sfn.JsonPath.taskToken,
+					'projectData.$': '$'
+				})
+			}
 		);
 
-		// Define API Gateway and add methods to it
-		const api = new apigateway.RestApi(this, 'HttpApi', {
-			restApiName: `supplyFunnelApi-${environmentName}`
+		const approvalState = new sfnTasks.LambdaInvoke(this, 'ApprovalState', {
+			lambdaFunction: handleApprovalLambda,
+			outputPath: '$.Payload'
 		});
+
+		const waitlistState = new sfnTasks.LambdaInvoke(this, 'WaitlistState', {
+			lambdaFunction: handleWaitlistLambda,
+			outputPath: '$.Payload'
+		});
+
+		const adminDecisionStateMachine = new sfn.StateMachine(
+			this,
+			'adminDecisionStateMachine',
+			{
+				definition: sfn.Chain.start(requestAdminDecisionState).next(
+					new sfn.Choice(this, 'Admin Decision')
+						.when(
+							sfn.Condition.stringEquals('$.decision', 'approve'),
+							approvalState
+						)
+						.when(
+							sfn.Condition.stringEquals(
+								'$.decision',
+								'waitlist'
+							),
+							waitlistState
+						)
+				),
+				timeout: cdk.Duration.minutes(5)
+			}
+		);
+
+		// === Lambdas ===
+		const handleEntryLambda = this.createLambdaFunction(
+			'1-entry/handle-entry.ts',
+			'HandleEntryLambda',
+			lambdaRole,
+			{
+				BUCKET_NAME: s3Bucket.bucketName,
+				STATE_MACHINE_ARN: adminDecisionStateMachine.stateMachineArn
+			}
+		);
+
+		// === API Gateway ===
+		// Add method to handle Monday.com webhook
 		api.root.addMethod(
 			'POST',
 			new apigateway.LambdaIntegration(handleEntryLambda)
-		); // For handling entries
+		);
+		// Add resources and methods for each admin decision
 		api.root
-			.addResource('admin-decision')
+			.addResource('approve')
 			.addMethod(
 				'POST',
-				new apigateway.LambdaIntegration(adminChoiceLambda)
-			); // For handling admin decision
-
-		// Define Step Function States
-		const approvalState = this.createStepFunctionState(
-			'HandleApprovalState',
-			handleApprovalLambda
-		);
-		const waitlistState = this.createStepFunctionState(
-			'HandleWaitlistState',
-			handleWaitlistLambda
-		);
-
-		// Define State Machine for decision making
-		new sfn.StateMachine(this, 'DecisionStateMachine', {
-			definition: new sfn.Choice(this, 'Admin Decision')
-				.when(
-					sfn.Condition.stringEquals('$.decision', 'approve'),
-					approvalState
-				)
-				.when(
-					sfn.Condition.stringEquals('$.decision', 'waitlist'),
-					waitlistState
-				),
-			timeout: cdk.Duration.minutes(5)
-		});
+				new apigateway.LambdaIntegration(handleApprovalLambda)
+			);
+		api.root
+			.addResource('waitlist')
+			.addMethod(
+				'POST',
+				new apigateway.LambdaIntegration(handleWaitlistLambda)
+			);
 	}
 
 	// Helper Function to create Lambda Functions
@@ -132,17 +172,6 @@ export class SupplyFunnelStack extends cdk.Stack {
 			entry: join(__dirname, `../lambdas/${filePath}`),
 			handler: 'handler',
 			environment
-		});
-	}
-
-	// Helper Function to create Step Function States
-	createStepFunctionState(
-		id: string,
-		lambdaFunc: lambdaNodeJs.NodejsFunction
-	) {
-		return new sfnTasks.LambdaInvoke(this, id, {
-			lambdaFunction: lambdaFunc,
-			outputPath: '$.Payload'
 		});
 	}
 }

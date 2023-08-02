@@ -3,10 +3,10 @@ import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { SFNClient, StartExecutionCommand } from '@aws-sdk/client-sfn';
 
 const s3Client = new S3Client({ region: 'us-east-1' });
-const sfnClient = new SFNClient({ region: 'us-east-1' }); // New
+const sfnClient = new SFNClient({ region: 'us-east-1' });
 
 const bucketName = process.env.BUCKET_NAME;
-const stateMachineArn = process.env.STATE_MACHINE_ARN; // New
+const stateMachineArn = process.env.STATE_MACHINE_ARN;
 
 export const handler = async (
 	event: APIGatewayProxyEvent
