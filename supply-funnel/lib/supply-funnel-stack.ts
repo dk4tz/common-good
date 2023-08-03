@@ -49,7 +49,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 		// Step Functions
 		lambdaRole.addToPolicy(
 			new iam.PolicyStatement({
-				actions: ['states:StartExecution'],
+				actions: ['states:StartExecution', 'states:SendTaskSuccess'],
 				resources: ['*']
 			})
 		);
@@ -92,6 +92,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 		);
 
 		// === Step Functions ===
+		// States
 		const requestAdminDecisionState = new sfnTasks.LambdaInvoke(
 			this,
 			'RequestAdminDecisionState',
@@ -104,17 +105,15 @@ export class SupplyFunnelStack extends cdk.Stack {
 				})
 			}
 		);
-
 		const approvalState = new sfnTasks.LambdaInvoke(this, 'ApprovalState', {
 			lambdaFunction: handleApprovalLambda,
 			outputPath: '$.Payload'
 		});
-
 		const waitlistState = new sfnTasks.LambdaInvoke(this, 'WaitlistState', {
 			lambdaFunction: handleWaitlistLambda,
 			outputPath: '$.Payload'
 		});
-
+		// State Machine
 		const adminDecisionStateMachine = new sfn.StateMachine(
 			this,
 			'adminDecisionStateMachine',
@@ -141,7 +140,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 		const api = new apigateway.RestApi(this, 'HttpApi', {
 			restApiName: `supplyFunnelApi-${environmentName}`
 		});
-
+		// Add method for Monday.com webhook
 		api.root.addMethod(
 			'POST',
 			new apigateway.LambdaIntegration(handleEntryLambda)

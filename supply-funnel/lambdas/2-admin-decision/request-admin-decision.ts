@@ -20,7 +20,10 @@ export const handler = async (event: StepFunctionEvent): Promise<void> => {
 
 	// Extract the task token and admin email from the event and environment variable
 	const taskToken = event['taskToken'];
+	const projectData = event['projectData'];
 	const adminEmail = process.env.ADMIN_EMAIL;
+
+	// To Do: generate entry in DynamoDB table. project data + status = pending
 
 	// Check if adminEmail environment variable is set
 	if (!adminEmail) {
@@ -29,7 +32,7 @@ export const handler = async (event: StepFunctionEvent): Promise<void> => {
 	}
 
 	// Send email with approval link
-	await sendApprovalEmail(taskToken, adminEmail, apiGatewayUrl);
+	await sendApprovalEmail(taskToken, adminEmail, apiGatewayUrl, projectData);
 };
 
 // Fetch parameters from AWS SSM
@@ -47,17 +50,25 @@ async function getParam(param: string): Promise<string> {
 async function sendApprovalEmail(
 	taskToken: string,
 	adminEmail: string,
-	apiGatewayUrl: string
+	apiGatewayUrl: string,
+	projectData: any
 ) {
-	// Email subject and body text
-	const subject = 'Admin Decision Required';
-	const bodyText = `To take action, please click one of the following links: 
-    Approve: <API_GATEWAY_URL>/approve?taskToken=<TASK_TOKEN> 
-    Waitlist: <API_GATEWAY_URL>/waitlist?taskToken=<TASK_TOKEN>`;
-	// Replace placeholder values in the body text
-	const emailBody = bodyText
-		.replace(/<API_GATEWAY_URL>/g, apiGatewayUrl)
-		.replace(/<TASK_TOKEN>/g, encodeURIComponent(taskToken));
+	// Email subject
+	const subject = `Admin Decision Requested - ${projectData.text3}`;
+
+	// Email body text
+	let bodyText = `<h2>Project Details</h2>`;
+	for (let key in projectData) {
+		bodyText += `<p><strong>${key}:</strong> ${projectData[key]}</p>`;
+	}
+
+	bodyText += `<p>To take action, please click one of the following links:</p>
+    <p><a href="${apiGatewayUrl}/approve?taskToken=${encodeURIComponent(
+		taskToken
+	)}">Approve</a></p>
+    <p><a href="${apiGatewayUrl}/waitlist?taskToken=${encodeURIComponent(
+		taskToken
+	)}">Waitlist</a></p>`;
 
 	const params = {
 		Destination: {
@@ -65,7 +76,7 @@ async function sendApprovalEmail(
 		},
 		Message: {
 			Body: {
-				Html: { Data: emailBody }
+				Html: { Data: bodyText }
 			},
 			Subject: { Data: subject }
 		},
