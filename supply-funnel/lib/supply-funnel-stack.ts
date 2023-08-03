@@ -6,6 +6,7 @@ import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as lambdaNodeJs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
 import * as sfnTasks from 'aws-cdk-lib/aws-stepfunctions-tasks';
+import * as ssm from 'aws-cdk-lib/aws-ssm';
 import { Construct } from 'constructs';
 import { join } from 'path';
 
@@ -28,43 +29,51 @@ export class SupplyFunnelStack extends cdk.Stack {
 			versioned: true
 		});
 
-		// === Roles ===
+		// === IAM Role & Permissions ===
 		const lambdaRole = new iam.Role(this, 'LambdaExecutionRole', {
 			assumedBy: new iam.ServicePrincipal('lambda.amazonaws.com')
 		});
+		// Lambda
 		lambdaRole.addManagedPolicy(
 			iam.ManagedPolicy.fromAwsManagedPolicyName(
 				'service-role/AWSLambdaBasicExecutionRole'
 			)
 		);
-
-		// === Permissions ===
+		// S3
 		lambdaRole.addToPolicy(
 			new iam.PolicyStatement({
 				actions: ['s3:PutObject'],
 				resources: [s3Bucket.arnForObjects('*')]
 			})
 		);
-
+		// Step Functions
 		lambdaRole.addToPolicy(
 			new iam.PolicyStatement({
 				actions: ['states:StartExecution'],
 				resources: ['*']
 			})
 		);
+		// SES
 		lambdaRole.addToPolicy(
 			new iam.PolicyStatement({
 				actions: ['ses:SendEmail', 'ses:SendRawEmail'],
 				resources: ['*']
 			})
 		);
-
-		// === API Gateway ===
-		const api = new apigateway.RestApi(this, 'HttpApi', {
-			restApiName: `supplyFunnelApi-${environmentName}`
-		});
+		// SSM Parameter Store
+		lambdaRole.addToPolicy(
+			new iam.PolicyStatement({
+				actions: ['ssm:GetParameter'],
+				resources: ['*']
+			})
+		);
 
 		// === Lambdas ===
+		const handleEntryLambda = this.createLambdaFunction(
+			'1-entry/handle-entry.ts',
+			'HandleEntryLambda',
+			lambdaRole
+		);
 		const requestAdminDecisionLambda = this.createLambdaFunction(
 			'2-admin-decision/request-admin-decision.ts',
 			'RequestAdminDecisionLambda',
@@ -128,19 +137,11 @@ export class SupplyFunnelStack extends cdk.Stack {
 			}
 		);
 
-		// === Lambdas ===
-		const handleEntryLambda = this.createLambdaFunction(
-			'1-entry/handle-entry.ts',
-			'HandleEntryLambda',
-			lambdaRole,
-			{
-				BUCKET_NAME: s3Bucket.bucketName,
-				STATE_MACHINE_ARN: adminDecisionStateMachine.stateMachineArn
-			}
-		);
-
 		// === API Gateway ===
-		// Add method to handle Monday.com webhook
+		const api = new apigateway.RestApi(this, 'HttpApi', {
+			restApiName: `supplyFunnelApi-${environmentName}`
+		});
+
 		api.root.addMethod(
 			'POST',
 			new apigateway.LambdaIntegration(handleEntryLambda)
@@ -149,15 +150,31 @@ export class SupplyFunnelStack extends cdk.Stack {
 		api.root
 			.addResource('approve')
 			.addMethod(
-				'POST',
+				'GET',
 				new apigateway.LambdaIntegration(handleApprovalLambda)
 			);
 		api.root
 			.addResource('waitlist')
 			.addMethod(
-				'POST',
+				'GET',
 				new apigateway.LambdaIntegration(handleWaitlistLambda)
 			);
+
+		// === SSM Parameters ===
+		new ssm.StringParameter(this, 'S3BucketNameParameter', {
+			parameterName: `/supply-funnel/s3-bucket-name`,
+			stringValue: s3Bucket.bucketName
+		});
+
+		new ssm.StringParameter(this, 'StateMachineArnParameter', {
+			parameterName: `/supply-funnel/state-machine-arn`,
+			stringValue: adminDecisionStateMachine.stateMachineArn
+		});
+
+		new ssm.StringParameter(this, 'ApiGatewayUrlParameter', {
+			parameterName: `/supply-funnel/api-gateway-url`,
+			stringValue: api.url
+		});
 	}
 
 	// Helper Function to create Lambda Functions
