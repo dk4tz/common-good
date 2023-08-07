@@ -2,6 +2,7 @@
 import * as cdk from 'aws-cdk-lib';
 import * as iam from 'aws-cdk-lib/aws-iam';
 import * as s3 from 'aws-cdk-lib/aws-s3';
+import * as dynamodb from 'aws-cdk-lib/aws-dynamodb';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as lambdaNodeJs from 'aws-cdk-lib/aws-lambda-nodejs';
 import * as sfn from 'aws-cdk-lib/aws-stepfunctions';
@@ -27,6 +28,16 @@ export class SupplyFunnelStack extends cdk.Stack {
 		const s3Bucket = new s3.Bucket(this, 'SupplyFunnelBucket', {
 			removalPolicy: cdk.RemovalPolicy.RETAIN,
 			versioned: true
+		});
+
+		// === DynamoDB Tables ===
+		const dynamoTable = new dynamodb.Table(this, 'ImpactAssessmentTable', {
+			partitionKey: {
+				name: 'id',
+				type: dynamodb.AttributeType.STRING
+			},
+			billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+			removalPolicy: cdk.RemovalPolicy.RETAIN
 		});
 
 		// === IAM Role & Permissions ===
@@ -67,17 +78,32 @@ export class SupplyFunnelStack extends cdk.Stack {
 				resources: ['*']
 			})
 		);
+		// DynamoDB
+		lambdaRole.addToPolicy(
+			new iam.PolicyStatement({
+				actions: [
+					'dynamodb:GetItem',
+					'dynamodb:PutItem',
+					'dynamodb:UpdateItem',
+					'dynamodb:Query',
+					'dynamodb:Scan'
+				],
+				resources: [dynamoTable.tableArn]
+			})
+		);
 
 		// === Lambdas ===
 		const handleEntryLambda = this.createLambdaFunction(
 			'1-entry/handle-entry.ts',
 			'HandleEntryLambda',
-			lambdaRole
+			lambdaRole,
+			10
 		);
 		const requestAdminDecisionLambda = this.createLambdaFunction(
 			'2-admin-decision/request-admin-decision.ts',
 			'RequestAdminDecisionLambda',
 			lambdaRole,
+			5,
 			{ ADMIN_EMAIL: adminEmail }
 		);
 		const handleApprovalLambda = this.createLambdaFunction(
@@ -165,6 +191,11 @@ export class SupplyFunnelStack extends cdk.Stack {
 			stringValue: s3Bucket.bucketName
 		});
 
+		new ssm.StringParameter(this, 'DynamoTableNameParameter', {
+			parameterName: `/supply-funnel/dynamo-table-name`,
+			stringValue: dynamoTable.tableName
+		});
+
 		new ssm.StringParameter(this, 'StateMachineArnParameter', {
 			parameterName: `/supply-funnel/state-machine-arn`,
 			stringValue: adminDecisionStateMachine.stateMachineArn
@@ -181,12 +212,14 @@ export class SupplyFunnelStack extends cdk.Stack {
 		filePath: string,
 		id: string,
 		lambdaRole: iam.Role,
+		timeoutSecs: number = 5,
 		environment?: { [key: string]: string }
 	) {
 		return new lambdaNodeJs.NodejsFunction(this, id, {
 			role: lambdaRole,
 			entry: join(__dirname, `../lambdas/${filePath}`),
 			handler: 'handler',
+			timeout: cdk.Duration.seconds(timeoutSecs),
 			environment
 		});
 	}

@@ -40,10 +40,10 @@ export const handler = async (
 		return {
 			statusCode: 500,
 			body: JSON.stringify({
-				message: 'Failed to approve the task'
+				message:
+					"There was an error approving the project. It's likely this project has already been processed."
 			})
 		};
 	}
-
-	// To Do: Update DynamoDB status, generate GPT answers to Design Doc questions, send email to project owner
+	// To Do: Update DynamoDB status = approved, generate GPT answers to Design Doc questions, send email to project owner
 };

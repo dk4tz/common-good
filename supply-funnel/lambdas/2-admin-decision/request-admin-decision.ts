@@ -54,7 +54,7 @@ async function sendApprovalEmail(
 	projectData: any
 ) {
 	// Email subject
-	const subject = `Admin Decision Requested - ${projectData.text3}`;
+	const subject = `Admin Decision Requested - ${projectData['project-name']}`;
 
 	// Email body text
 	let bodyText = `<h2>Project Details</h2>`;
