@@ -118,7 +118,8 @@ export class SupplyFunnelStack extends cdk.Stack {
 		);
 
 		// === Step Functions ===
-		// States
+
+		// State to invoke Lambda and request admin decision.
 		const requestAdminDecisionState = new sfnTasks.LambdaInvoke(
 			this,
 			'RequestAdminDecisionState',
@@ -131,32 +132,44 @@ export class SupplyFunnelStack extends cdk.Stack {
 				})
 			}
 		);
+
+		// State to invoke Lambda for approval handling.
 		const approvalState = new sfnTasks.LambdaInvoke(this, 'ApprovalState', {
 			lambdaFunction: handleApprovalLambda,
 			outputPath: '$.Payload'
 		});
+
+		// State to invoke Lambda for waitlist handling.
 		const waitlistState = new sfnTasks.LambdaInvoke(this, 'WaitlistState', {
 			lambdaFunction: handleWaitlistLambda,
 			outputPath: '$.Payload'
 		});
-		// State Machine
+
+		// Define the state machine.
+		// 1. Starts with requesting the admin's decision.
+		// 2. Based on the decision, it either moves to 'Approval' or 'Waitlist' state.
 		const adminDecisionStateMachine = new sfn.StateMachine(
 			this,
 			'adminDecisionStateMachine',
 			{
-				definition: sfn.Chain.start(requestAdminDecisionState).next(
-					new sfn.Choice(this, 'Admin Decision')
-						.when(
-							sfn.Condition.stringEquals('$.decision', 'approve'),
-							approvalState
-						)
-						.when(
-							sfn.Condition.stringEquals(
-								'$.decision',
-								'waitlist'
-							),
-							waitlistState
-						)
+				definitionBody: sfn.DefinitionBody.fromChainable(
+					sfn.Chain.start(requestAdminDecisionState).next(
+						new sfn.Choice(this, 'Admin Decision')
+							.when(
+								sfn.Condition.stringEquals(
+									'$.decision',
+									'approve'
+								),
+								approvalState
+							)
+							.when(
+								sfn.Condition.stringEquals(
+									'$.decision',
+									'waitlist'
+								),
+								waitlistState
+							)
+					)
 				),
 				timeout: cdk.Duration.minutes(5)
 			}

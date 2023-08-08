@@ -75,6 +75,7 @@ const sfnClient = new SFNClient({ region: process.env.AWS_REGION });
 const ssmClient = new SSMClient({ region: process.env.AWS_REGION });
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
 
+// Main lambda handler
 export const handler = async (
 	event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
