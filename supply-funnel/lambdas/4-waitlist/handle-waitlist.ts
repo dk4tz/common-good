@@ -41,7 +41,7 @@ export const handler = async (
 			statusCode: 500,
 			body: JSON.stringify({
 				message:
-					"There was an error waitlisting the project. It's likely this project has already been processed."
+					"There was an error waitlisting the project. It's likely we've already processed this project. If by mistake, generate a duplicate entry in Monday.com and try again."
 			})
 		};
 	}

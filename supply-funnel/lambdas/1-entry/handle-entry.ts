@@ -108,12 +108,12 @@ export const handler = async (
 
 async function init() {
 	console.log('Initializing and fetching necessary parameters');
-	const [bucketName, stateMachineArn, dynamoTableName] = await Promise.all([
+	const [bucketName, stateMachineArn, impactTableName] = await Promise.all([
 		getParam('/supply-funnel/s3-bucket-name'),
 		getParam('/supply-funnel/state-machine-arn'),
-		getParam('/supply-funnel/dynamo-table-name')
+		getParam('/supply-funnel/impact-table-name')
 	]);
-	return { bucketName, stateMachineArn, dynamoTableName };
+	return { bucketName, stateMachineArn, impactTableName };
 }
 
 async function getParam(param: string): Promise<string> {
@@ -147,7 +147,7 @@ async function handleCreatePulseEvent(input: any, config: any) {
 			prepareCsvData(keyValues),
 			config.bucketName
 		),
-		saveToDynamoDB(keyValues, config.dynamoTableName),
+		saveToDynamoDB(keyValues, config.impactTableName),
 		startStepFunctionsExecution(keyValues, config.stateMachineArn)
 	]);
 	return {

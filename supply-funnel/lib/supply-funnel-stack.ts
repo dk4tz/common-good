@@ -31,7 +31,16 @@ export class SupplyFunnelStack extends cdk.Stack {
 		});
 
 		// === DynamoDB Tables ===
-		const dynamoTable = new dynamodb.Table(this, 'ImpactAssessmentTable', {
+		const impactTable = new dynamodb.Table(this, 'ImpactAssessmentTable', {
+			partitionKey: {
+				name: 'id',
+				type: dynamodb.AttributeType.STRING
+			},
+			billingMode: dynamodb.BillingMode.PAY_PER_REQUEST,
+			removalPolicy: cdk.RemovalPolicy.RETAIN
+		});
+
+		const designDocTable = new dynamodb.Table(this, 'DesignDocumentTable', {
 			partitionKey: {
 				name: 'id',
 				type: dynamodb.AttributeType.STRING
@@ -88,7 +97,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 					'dynamodb:Query',
 					'dynamodb:Scan'
 				],
-				resources: [dynamoTable.tableArn]
+				resources: [impactTable.tableArn, designDocTable.tableArn]
 			})
 		);
 
@@ -97,13 +106,13 @@ export class SupplyFunnelStack extends cdk.Stack {
 			'1-entry/handle-entry.ts',
 			'HandleEntryLambda',
 			lambdaRole,
+			{},
 			10
 		);
 		const requestAdminDecisionLambda = this.createLambdaFunction(
 			'2-admin-decision/request-admin-decision.ts',
 			'RequestAdminDecisionLambda',
 			lambdaRole,
-			5,
 			{ ADMIN_EMAIL: adminEmail }
 		);
 		const handleApprovalLambda = this.createLambdaFunction(
@@ -117,9 +126,15 @@ export class SupplyFunnelStack extends cdk.Stack {
 			lambdaRole
 		);
 
-		// === Step Functions ===
+		const generateDesignDocLambda = this.createLambdaFunction(
+			'5-design-doc/generate-design-doc.ts',
+			'GenerateDesignDocLambda',
+			lambdaRole,
+			{ ADMIN_EMAIL: adminEmail }
+		);
 
-		// State to invoke Lambda and request admin decision.
+		// === Step Functions ===
+		// Request Admin Approve or Waitlist via email
 		const requestAdminDecisionState = new sfnTasks.LambdaInvoke(
 			this,
 			'RequestAdminDecisionState',
@@ -133,21 +148,29 @@ export class SupplyFunnelStack extends cdk.Stack {
 			}
 		);
 
-		// State to invoke Lambda for approval handling.
+		// Approve Project
 		const approvalState = new sfnTasks.LambdaInvoke(this, 'ApprovalState', {
 			lambdaFunction: handleApprovalLambda,
 			outputPath: '$.Payload'
 		});
 
-		// State to invoke Lambda for waitlist handling.
+		// Waitlist Project
 		const waitlistState = new sfnTasks.LambdaInvoke(this, 'WaitlistState', {
 			lambdaFunction: handleWaitlistLambda,
 			outputPath: '$.Payload'
 		});
 
-		// Define the state machine.
-		// 1. Starts with requesting the admin's decision.
-		// 2. Based on the decision, it either moves to 'Approval' or 'Waitlist' state.
+		// Generate Design Document Draft (GPT)
+		const designDocState = new sfnTasks.LambdaInvoke(
+			this,
+			'DesignDocState',
+			{
+				lambdaFunction: generateDesignDocLambda,
+				outputPath: '$.Payload'
+			}
+		);
+
+		// Define the state machine
 		const adminDecisionStateMachine = new sfn.StateMachine(
 			this,
 			'adminDecisionStateMachine',
@@ -160,7 +183,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 									'$.decision',
 									'approve'
 								),
-								approvalState
+								approvalState.next(designDocState)
 							)
 							.when(
 								sfn.Condition.stringEquals(
@@ -204,9 +227,14 @@ export class SupplyFunnelStack extends cdk.Stack {
 			stringValue: s3Bucket.bucketName
 		});
 
-		new ssm.StringParameter(this, 'DynamoTableNameParameter', {
-			parameterName: `/supply-funnel/dynamo-table-name`,
-			stringValue: dynamoTable.tableName
+		new ssm.StringParameter(this, 'impactTableNameParameter', {
+			parameterName: `/supply-funnel/impact-table-name`,
+			stringValue: impactTable.tableName
+		});
+
+		new ssm.StringParameter(this, 'designDocTableNameParameter', {
+			parameterName: `/supply-funnel/design-doc-table-name`,
+			stringValue: impactTable.tableName
 		});
 
 		new ssm.StringParameter(this, 'StateMachineArnParameter', {
@@ -225,8 +253,8 @@ export class SupplyFunnelStack extends cdk.Stack {
 		filePath: string,
 		id: string,
 		lambdaRole: iam.Role,
-		timeoutSecs: number = 5,
-		environment?: { [key: string]: string }
+		environment?: { [key: string]: string },
+		timeoutSecs: number = 5
 	) {
 		return new lambdaNodeJs.NodejsFunction(this, id, {
 			role: lambdaRole,
