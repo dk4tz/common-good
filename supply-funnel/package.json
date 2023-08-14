@@ -29,6 +29,7 @@
     "@aws-sdk/client-ssm": "^3.382.0",
     "aws-cdk-lib": "^2.88.0",
     "constructs": "^10.0.0",
+    "langchain": "^0.0.127",
     "source-map-support": "^0.5.21"
   }
 }

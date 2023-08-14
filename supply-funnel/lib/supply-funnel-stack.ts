@@ -25,7 +25,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 		const { environmentName, adminEmail } = props;
 
 		// === S3 Buckets ===
-		const s3Bucket = new s3.Bucket(this, 'SupplyFunnelBucket', {
+		const s3Bucket = new s3.Bucket(this, 'ImpactReportBucket', {
 			removalPolicy: cdk.RemovalPolicy.RETAIN,
 			versioned: true
 		});
