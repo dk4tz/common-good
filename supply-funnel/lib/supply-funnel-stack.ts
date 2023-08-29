@@ -25,7 +25,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 		const { environmentName, adminEmail } = props;
 
 		// === S3 Buckets ===
-		const s3Bucket = new s3.Bucket(this, 'ImpactReportBucket', {
+		const s3Bucket = new s3.Bucket(this, 'ImpactAssessmentBucket', {
 			removalPolicy: cdk.RemovalPolicy.RETAIN,
 			versioned: true
 		});
@@ -109,31 +109,47 @@ export class SupplyFunnelStack extends cdk.Stack {
 			{},
 			10
 		);
+		const generateImpactAssessmentLambda = this.createLambdaFunction(
+			'2-impact-assessment/generate-impact-assessment.ts',
+			'GenerateImpactAssessmentLambda',
+			lambdaRole,
+			{ IMPACT_BUCKET_NAME: s3Bucket.bucketName }
+		);
 		const requestAdminDecisionLambda = this.createLambdaFunction(
-			'2-admin-decision/request-admin-decision.ts',
+			'3-admin-decision/request-admin-decision.ts',
 			'RequestAdminDecisionLambda',
 			lambdaRole,
-			{ ADMIN_EMAIL: adminEmail }
+			{ IMPACT_BUCKET_NAME: s3Bucket.bucketName, ADMIN_EMAIL: adminEmail }
 		);
 		const handleApprovalLambda = this.createLambdaFunction(
-			'3-approval/handle-approval.ts',
+			'4-approval/handle-approval.ts',
 			'HandleApprovalLambda',
 			lambdaRole
 		);
 		const handleWaitlistLambda = this.createLambdaFunction(
-			'4-waitlist/handle-waitlist.ts',
+			'5-waitlist/handle-waitlist.ts',
 			'HandleWaitlistLambda',
 			lambdaRole
 		);
-
 		const generateDesignDocLambda = this.createLambdaFunction(
-			'5-design-doc/generate-design-doc.ts',
+			'6-design-doc/generate-design-doc.ts',
 			'GenerateDesignDocLambda',
 			lambdaRole,
 			{ ADMIN_EMAIL: adminEmail }
 		);
 
 		// === Step Functions ===
+		// Generate the Impact Assessment and save to S3
+		const generateImpactAssessmentState = new sfnTasks.LambdaInvoke(
+			this,
+			'GenerateImpactAssessmentState',
+			{
+				lambdaFunction: generateImpactAssessmentLambda,
+				integrationPattern: sfn.IntegrationPattern.REQUEST_RESPONSE,
+				outputPath: '$.Payload'
+			}
+		);
+
 		// Request Admin Approve or Waitlist via email
 		const requestAdminDecisionState = new sfnTasks.LambdaInvoke(
 			this,
@@ -141,9 +157,11 @@ export class SupplyFunnelStack extends cdk.Stack {
 			{
 				lambdaFunction: requestAdminDecisionLambda,
 				integrationPattern: sfn.IntegrationPattern.WAIT_FOR_TASK_TOKEN,
+				inputPath: '$.Payload',
 				payload: sfn.TaskInput.fromObject({
 					taskToken: sfn.JsonPath.taskToken,
-					'projectData.$': '$'
+					orgName: sfn.JsonPath.stringAt('$.orgName'),
+					projectName: sfn.JsonPath.stringAt('$.projectName')
 				})
 			}
 		);
@@ -151,13 +169,15 @@ export class SupplyFunnelStack extends cdk.Stack {
 		// Approve Project
 		const approvalState = new sfnTasks.LambdaInvoke(this, 'ApprovalState', {
 			lambdaFunction: handleApprovalLambda,
-			outputPath: '$.Payload'
+			integrationPattern: sfn.IntegrationPattern.REQUEST_RESPONSE,
+			outputPath: '$'
 		});
 
 		// Waitlist Project
 		const waitlistState = new sfnTasks.LambdaInvoke(this, 'WaitlistState', {
 			lambdaFunction: handleWaitlistLambda,
-			outputPath: '$.Payload'
+			integrationPattern: sfn.IntegrationPattern.REQUEST_RESPONSE,
+			outputPath: '$'
 		});
 
 		// Generate Design Document Draft (GPT)
@@ -166,33 +186,36 @@ export class SupplyFunnelStack extends cdk.Stack {
 			'DesignDocState',
 			{
 				lambdaFunction: generateDesignDocLambda,
-				outputPath: '$.Payload'
+				integrationPattern: sfn.IntegrationPattern.REQUEST_RESPONSE,
+				outputPath: '$'
 			}
 		);
 
 		// Define the state machine
-		const adminDecisionStateMachine = new sfn.StateMachine(
+		const supplyFunnelStateMachine = new sfn.StateMachine(
 			this,
-			'adminDecisionStateMachine',
+			'supplyFunnelStateMachine',
 			{
 				definitionBody: sfn.DefinitionBody.fromChainable(
-					sfn.Chain.start(requestAdminDecisionState).next(
-						new sfn.Choice(this, 'Admin Decision')
-							.when(
-								sfn.Condition.stringEquals(
-									'$.decision',
-									'approve'
-								),
-								approvalState.next(designDocState)
-							)
-							.when(
-								sfn.Condition.stringEquals(
-									'$.decision',
-									'waitlist'
-								),
-								waitlistState
-							)
-					)
+					sfn.Chain.start(generateImpactAssessmentState)
+						.next(requestAdminDecisionState)
+						.next(
+							new sfn.Choice(this, 'Admin Decision')
+								.when(
+									sfn.Condition.stringEquals(
+										'$.decision',
+										'approve'
+									),
+									approvalState.next(designDocState)
+								)
+								.when(
+									sfn.Condition.stringEquals(
+										'$.decision',
+										'waitlist'
+									),
+									waitlistState
+								)
+						)
 				),
 				timeout: cdk.Duration.minutes(5)
 			}
@@ -239,7 +262,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 
 		new ssm.StringParameter(this, 'StateMachineArnParameter', {
 			parameterName: `/supply-funnel/state-machine-arn`,
-			stringValue: adminDecisionStateMachine.stateMachineArn
+			stringValue: supplyFunnelStateMachine.stateMachineArn
 		});
 
 		new ssm.StringParameter(this, 'ApiGatewayUrlParameter', {

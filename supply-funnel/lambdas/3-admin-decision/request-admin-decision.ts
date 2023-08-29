@@ -13,26 +13,35 @@ interface StepFunctionEvent {
 export const handler = async (event: StepFunctionEvent): Promise<void> => {
 	// Fetch the API Gateway URL
 	const apiGatewayUrl = await getParam('/supply-funnel/api-gateway-url');
+	const adminEmail = process.env.ADMIN_EMAIL;
+	const impactBucketName = process.env.IMPACT_BUCKET_NAME;
 
 	// Log the event
 	console.log('Look here vvvvv');
 	console.log(JSON.stringify({ event }));
 
-	// Extract the task token and admin email from the event and environment variable
-	const taskToken = event['taskToken'];
-	const projectData = event['projectData'];
-	const adminEmail = process.env.ADMIN_EMAIL;
-
-	// To Do: generate entry in DynamoDB table. project data + status = pending
+	// Extract the task token, project name from the event
+	const { orgName, projectName, taskToken } = event;
 
 	// Check if adminEmail environment variable is set
-	if (!adminEmail) {
-		console.error(`Required environment variable is missing: ADMIN_EMAIL`);
-		throw new Error('Environment variable ADMIN_EMAIL not set correctly.');
+	if (!adminEmail || !impactBucketName) {
+		console.error(
+			'Check that ADMIN_EMAIL and IMPACT_BUCKET_NAME are set correctly.'
+		);
+		throw new Error(
+			`Required environment variable is missing: ADMIN_EMAIL or IMPACT_BUCKET_NAME`
+		);
 	}
 
 	// Send email with approval link
-	await sendApprovalEmail(taskToken, adminEmail, apiGatewayUrl, projectData);
+	await sendApprovalEmail(
+		taskToken,
+		orgName,
+		projectName,
+		adminEmail,
+		impactBucketName,
+		apiGatewayUrl
+	);
 };
 
 // Fetch parameters from AWS SSM
@@ -49,18 +58,20 @@ async function getParam(param: string): Promise<string> {
 // Send email with approval link
 async function sendApprovalEmail(
 	taskToken: string,
+	orgName: string,
+	projectName: string,
 	adminEmail: string,
-	apiGatewayUrl: string,
-	projectData: any
+	impactBucketName: string,
+	apiGatewayUrl: string
 ) {
 	// Email subject
-	const subject = `Admin Decision Requested - ${projectData['project-name']}`;
+	const subject = `Admin Decision Requested - ${projectName}`;
 
 	// Email body text
 	let bodyText = `<h2>Project Details</h2>`;
-	for (let key in projectData) {
-		bodyText += `<p><strong>${key}:</strong> ${projectData[key]}</p>`;
-	}
+	bodyText += `<h4>Organization Name: ${orgName}</h4>`;
+
+	bodyText += `<p>Link to Impact Assessment: ${impactBucketName}/${projectName}</p>`;
 
 	bodyText += `<p>To take action, please click one of the following links:</p>
     <p><a href="${apiGatewayUrl}/approve?taskToken=${encodeURIComponent(

@@ -1,6 +1,5 @@
 // AWS SDK imports
 import { APIGatewayProxyEvent, APIGatewayProxyResult } from 'aws-lambda';
-import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { StartExecutionCommand, SFNClient } from '@aws-sdk/client-sfn';
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { DynamoDBClient, PutItemCommand } from '@aws-sdk/client-dynamodb';
@@ -20,22 +19,18 @@ const MONDAY_FORM_FIELD_LOOKUP: Record<string, any> = {
 	status1: 'toc-design',
 	upload_file67: 'toc-document-upload',
 	long_text23: 'toc-key-activities-and-outcomes',
-	status7: 'toc-strategic-integration',
-	long_text42: 'toc-justification',
 	status4: 'intended-unintended-outcomes',
 	long_text00: 'intended-unintended-outcomes-justification',
 	single_select1: 'beneficiaries-household-data',
 	long_text874: 'beneficiaries-household-data-justification',
 	upload_file0: 'beneficiaries-household-data-document-upload',
-	single_select9: 'assessments',
-	long_text67: 'assessments-justification',
-	upload_file06: 'assessments-document-upload',
-	single_select16: 'monitoring-activities',
-	long_text78: 'monitoring-activities-justification',
-	single_select5: 'framework-of-indicators',
-	long_text200: 'framework-of-indicators-justification',
+	single_select9: 'baseline and endline assessments',
+	long_text67: 'baseline and endline assessments-justification',
+	upload_file06: 'baseline and endline assessments-document-upload',
 	single_select54: 'periodic-reporting',
+	long_text02: 'periodic-reporting-justification',
 	long_text45: 'periodic-reporting-justification',
+	upload_file: 'periodic-reporting',
 	single_select6: 'beneficiary-surveys',
 	long_text99: 'beneficiary-surveys-justification',
 	upload_file2: 'beneficiary-surveys-document-upload',
@@ -47,32 +42,24 @@ const MONDAY_FORM_FIELD_LOOKUP: Record<string, any> = {
 	long_text86: 'beneficiaries-consent-justification',
 	true___false: 'impact-profile',
 	short_text: 'selected-outcome',
-	number: 'selected-outcome-scale',
+	single_select: 'selected-outcome-scale',
 	single_select51: 'selected-outcome-duration',
 	long_text35: 'selected-outcome-justification',
 	upload_file4: 'selected-outcome-document-upload',
-	single_select10: 'degree-of-change',
-	long_text04: 'degree-of-change-justification',
-	single_select7: 'observed-results',
-	long_text20: 'observed-results-justification',
-	long_text87: 'observed-results-methodology',
-	upload_file3: 'observed-results-document-upload',
-	single_select2: 'observed-results-impact-theme',
-	single_select12: 'observed-results-impact-theme-2',
-	number5: 'observed-results-sdg-gain',
-	number7: 'observed-results-additional-edu-years',
-	single_select42: 'observed-results-associated-outcomes',
-	short_text0: 'disability-treated',
-	number0: 'morality-rate-percentage',
-	number2: 'morality-rate-percentage-2',
+	single_select7: 'counterfactual',
+	long_text20: 'counterfactual-justification',
+	long_text87: 'counterfactual-methodology',
+	upload_file3: 'counterfactual-document-upload',
+	single_select2: 'outcome-impact-theme',
+	long_text_3: 'outcome-impact-theme',
 	short_text8: 'outcome-impact-theme',
 	number1: 'minutes-to-complete-assessment',
 	true___false6: 'anonymized-data',
 	long_text0: 'additional-comments'
 };
-const s3Client = new S3Client({ region: process.env.AWS_REGION });
-const sfnClient = new SFNClient({ region: process.env.AWS_REGION });
+
 const ssmClient = new SSMClient({ region: process.env.AWS_REGION });
+const sfnClient = new SFNClient({ region: process.env.AWS_REGION });
 const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
 
 // Main lambda handler
@@ -108,12 +95,12 @@ export const handler = async (
 
 async function init() {
 	console.log('Initializing and fetching necessary parameters');
-	const [bucketName, stateMachineArn, impactTableName] = await Promise.all([
-		getParam('/supply-funnel/s3-bucket-name'),
+	const [stateMachineArn, impactTableName, bucketName] = await Promise.all([
 		getParam('/supply-funnel/state-machine-arn'),
-		getParam('/supply-funnel/impact-table-name')
+		getParam('/supply-funnel/impact-table-name'),
+		getParam('/supply-funnel/s3-bucket-name')
 	]);
-	return { bucketName, stateMachineArn, impactTableName };
+	return { stateMachineArn, impactTableName, bucketName };
 }
 
 async function getParam(param: string): Promise<string> {
@@ -141,19 +128,34 @@ async function handleCreatePulseEvent(input: any, config: any) {
 	const keyValues = transformData(input.event.columnValues);
 	console.log('Transformed data:', JSON.stringify(keyValues));
 
+	const stepFunctionPayload = {
+		orgName: input.event.pulseName,
+		projectData: keyValues,
+		bucketName: config.bucketName
+	};
+
 	await Promise.all([
-		uploadToS3(
-			input.event.pulseName,
-			prepareCsvData(keyValues),
-			config.bucketName
-		),
 		saveToDynamoDB(keyValues, config.impactTableName),
-		startStepFunctionsExecution(keyValues, config.stateMachineArn)
+		startStepFunctionsExecution(stepFunctionPayload, config.stateMachineArn)
 	]);
+
 	return {
 		statusCode: 200,
 		body: JSON.stringify({ message: 'Event handled successfully' })
 	};
+}
+
+async function startStepFunctionsExecution(
+	payload: any,
+	stateMachineArn: string
+) {
+	console.log('Starting StepFunctions execution');
+	await sfnClient.send(
+		new StartExecutionCommand({
+			stateMachineArn: stateMachineArn,
+			input: JSON.stringify(payload)
+		})
+	);
 }
 
 const findNestedValue = (obj: Record<string, any>, keys: string[]): any => {
@@ -191,51 +193,6 @@ const transformData = (
 
 	return result;
 };
-
-function prepareCsvData(keyValues: any): string {
-	return Object.entries(keyValues)
-		.map(([key, value]) => {
-			// Convert the key and value to strings to ensure proper handling
-			let keyStr = String(key);
-			let valueStr = String(value);
-
-			// Escape double quotes and commas within the key and value
-			keyStr = `"${keyStr.replace(/"/g, '""')}"`;
-			valueStr = `"${valueStr.replace(/"/g, '""')}"`;
-
-			return `${keyStr},${valueStr}`;
-		})
-		.join('\n');
-}
-
-async function uploadToS3(
-	projectName: string,
-	csvRaw: string,
-	bucketName: string
-) {
-	console.log(`Uploading to S3 bucket ${bucketName}`);
-	await s3Client.send(
-		new PutObjectCommand({
-			Bucket: bucketName,
-			Key: `${projectName}/impactAssessmentRaw.csv`,
-			Body: csvRaw,
-			ContentType: 'text/csv'
-		})
-	);
-}
-
-async function startStepFunctionsExecution(
-	keyValues: any,
-	stateMachineArn: string
-) {
-	console.log('Starting StepFunctions execution');
-	await sfnClient.send(
-		new StartExecutionCommand({
-			stateMachineArn,
-			input: JSON.stringify(keyValues)
-		})
-	);
-}
 
 function generateIdFromContent(content: any): string {
 	const str = JSON.stringify(content);
@@ -281,52 +238,3 @@ async function saveToDynamoDB(
 		})
 	);
 }
-
-// Pretty print a nested object
-// type AnyDataStructure = { [key: string]: any } | any[];
-
-// function customStringify(
-// 	obj: AnyDataStructure,
-// 	indent: string = '',
-// 	visited: Set<any> = new Set()
-// ): string {
-// 	if (visited.has(obj)) {
-// 		return '"[Circular]"';
-// 	}
-// 	visited.add(obj);
-
-// 	if (Array.isArray(obj)) {
-// 		const arrItems = obj.map((item) => {
-// 			if (typeof item === 'object' && item !== null) {
-// 				return customStringify(item, indent + '  ', visited);
-// 			} else {
-// 				return JSON.stringify(item);
-// 			}
-// 		});
-// 		return '[\n' + indent + arrItems.join(',\n' + indent) + '\n]';
-// 	} else if (typeof obj === 'object' && obj !== null) {
-// 		const objItems = [];
-// 		for (const key in obj) {
-// 			if (obj.hasOwnProperty(key)) {
-// 				const value = obj[key];
-// 				objItems.push(
-// 					JSON.stringify(key) +
-// 						': ' +
-// 						(typeof value === 'object' && value !== null
-// 							? customStringify(value, indent + '  ', visited)
-// 							: JSON.stringify(value))
-// 				);
-// 			}
-// 		}
-// 		return (
-// 			'{\n' +
-// 			indent +
-// 			objItems.join(',\n' + indent) +
-// 			'\n' +
-// 			indent.substring(2) +
-// 			'}'
-// 		);
-// 	} else {
-// 		return JSON.stringify(obj);
-// 	}
-// }
