@@ -10,9 +10,7 @@ const sesClient = new SESClient({ region: process.env.REGION });
 const ssmClient = new SSMClient({ region: process.env.AWS_REGION });
 
 export const handler = async (event: StepFunctionEvent): Promise<void> => {
-	// Log the event
-	console.log('Look here vvvvv');
-	console.log(JSON.stringify({ event }));
+	console.log('Handling incoming event', JSON.stringify(event));
 
 	// Extract the task token and admin email from the event and environment variable
 	const adminEmail = process.env.ADMIN_EMAIL;

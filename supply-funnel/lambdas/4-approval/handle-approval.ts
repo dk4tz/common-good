@@ -7,7 +7,6 @@ export const handler = async (
 	console.log('Handling incoming event', JSON.stringify(event));
 
 	const taskToken = event.queryStringParameters?.taskToken;
-
 	if (!taskToken) {
 		return {
 			statusCode: 400,
@@ -41,7 +40,7 @@ export const handler = async (
 			statusCode: 500,
 			body: JSON.stringify({
 				message:
-					"There was an error waitlisting the project. It's likely we've already processed this project. If by mistake, generate a duplicate entry in Monday.com and try again."
+					"There was an error approving the project. It's likely we've already processed this project. If by mistake, generate a duplicate entry in Monday.com and try again."
 			})
 		};
 	}

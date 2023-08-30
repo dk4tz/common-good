@@ -66,7 +66,7 @@ const dynamoClient = new DynamoDBClient({ region: process.env.AWS_REGION });
 export const handler = async (
 	event: APIGatewayProxyEvent
 ): Promise<APIGatewayProxyResult> => {
-	console.log('Received event:', JSON.stringify(event));
+	console.log('Handling incoming event', JSON.stringify(event));
 
 	if (!event.body) {
 		console.error('Error: No event body');
@@ -129,7 +129,7 @@ async function handleCreatePulseEvent(input: any, config: any) {
 	console.log('Transformed data:', JSON.stringify(keyValues));
 
 	const stepFunctionPayload = {
-		orgName: input.event.pulseName,
+		orgName: input.event.pulseName.replace(/[^a-zA-Z0-9()]/g, '_'),
 		projectData: keyValues,
 		bucketName: config.bucketName
 	};

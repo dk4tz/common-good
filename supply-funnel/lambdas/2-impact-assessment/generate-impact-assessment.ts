@@ -14,34 +14,58 @@ const s3Client = new S3Client({ region: process.env.AWS_REGION });
 export const handler = async (
 	event: StepFunctionEvent
 ): Promise<LambdaResponse> => {
-	console.log('Received event:', JSON.stringify(event));
-
+	console.log('Handling incoming event', JSON.stringify(event));
 	const impactBucketName = process.env.IMPACT_BUCKET_NAME;
+
 	const { orgName, projectData } = event;
+
+	console.log('Org Name: ', orgName);
+	console.log('Project Data: ', projectData);
 
 	if (!orgName || !projectData || !impactBucketName) {
 		console.error('Error: Missing required parameters');
 		throw new Error('Missing required parameters');
 	}
 
-	console.log('Org Name: ', orgName);
-	console.log('Project Name: ', projectData['project-name']);
-	console.log('Project Data: ', projectData);
+	const projectName = projectData['project-name'].replace(
+		/[^a-zA-Z0-9()]/g,
+		'_'
+	);
 
-	const projectName = projectData['project-name'];
+	// 1. Transform projectData to CSV
+	const csvString = convertToCSV(projectData);
 
-	// await uploadToS3(orgName, csvRaw, config.bucketName);
+	// 2. Save the CSV to S3
+	const csvPath = `${orgName}/${projectName}_rawImpactAssessment.csv`;
+	await uploadToS3(csvPath, csvString, impactBucketName);
+
 	return {
 		Payload: { orgName, projectName }
 	};
 };
 
-async function uploadToS3(orgName: string, csvRaw: string, bucketName: string) {
+function convertToCSV(keyValues: any): string {
+	return Object.entries(keyValues)
+		.map(([key, value]) => {
+			// Convert the key and value to strings to ensure proper handling
+			let keyStr = String(key);
+			let valueStr = String(value);
+
+			// Escape double quotes and commas within the key and value
+			keyStr = `"${keyStr.replace(/"/g, '""')}"`;
+			valueStr = `"${valueStr.replace(/"/g, '""')}"`;
+
+			return `${keyStr},${valueStr}`;
+		})
+		.join('\n');
+}
+
+async function uploadToS3(csvPath: string, csvRaw: string, bucketName: string) {
 	console.log(`Uploading to S3 bucket ${bucketName}`);
 	await s3Client.send(
 		new PutObjectCommand({
 			Bucket: bucketName,
-			Key: `${orgName}/impactAssessmentRaw.csv`,
+			Key: csvPath,
 			Body: csvRaw,
 			ContentType: 'text/csv'
 		})

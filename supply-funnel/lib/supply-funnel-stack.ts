@@ -62,7 +62,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 		// S3
 		lambdaRole.addToPolicy(
 			new iam.PolicyStatement({
-				actions: ['s3:PutObject'],
+				actions: ['s3:PutObject', 's3:GetObject'],
 				resources: [s3Bucket.arnForObjects('*')]
 			})
 		);

@@ -13,6 +13,7 @@
   "devDependencies": {
     "@types/aws-lambda": "^8.10.119",
     "@types/jest": "^29.5.3",
+    "@types/luxon": "^3.3.1",
     "@types/node": "20.4.2",
     "aws-cdk": "2.88.0",
     "esbuild": "^0.18.17",
@@ -27,9 +28,11 @@
     "@aws-sdk/client-ses": "^3.378.0",
     "@aws-sdk/client-sfn": "^3.378.0",
     "@aws-sdk/client-ssm": "^3.382.0",
+    "@aws-sdk/s3-request-presigner": "^3.400.0",
     "aws-cdk-lib": "^2.88.0",
     "constructs": "^10.0.0",
     "langchain": "^0.0.127",
+    "luxon": "^3.4.2",
     "source-map-support": "^0.5.21"
   }
 }

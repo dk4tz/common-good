@@ -7,7 +7,6 @@ export const handler = async (
 	console.log('Handling incoming event', JSON.stringify(event));
 
 	const taskToken = event.queryStringParameters?.taskToken;
-
 	if (!taskToken) {
 		return {
 			statusCode: 400,
