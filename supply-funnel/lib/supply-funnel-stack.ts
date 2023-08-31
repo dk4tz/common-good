@@ -162,7 +162,8 @@ export class SupplyFunnelStack extends cdk.Stack {
 					taskToken: sfn.JsonPath.taskToken,
 					orgName: sfn.JsonPath.stringAt('$.orgName'),
 					projectName: sfn.JsonPath.stringAt('$.projectName')
-				})
+				}),
+				taskTimeout: sfn.Timeout.duration(cdk.Duration.days(364)) // 1 year (max)
 			}
 		);
 
@@ -216,8 +217,7 @@ export class SupplyFunnelStack extends cdk.Stack {
 									waitlistState
 								)
 						)
-				),
-				timeout: cdk.Duration.minutes(5)
+				)
 			}
 		);
 
