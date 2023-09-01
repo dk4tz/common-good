@@ -110,18 +110,21 @@ async function generateImpactAssessmentPDF(
 			color = rgb(1, 0.7, 0.7); // Pastel red
 		}
 
-		page.drawText(`${dimension}: ${dimensionResults[dimension]}`, {
-			x: 50,
-			y: yPos,
-			size: 20,
-			font: contentFont,
-			color: color
-		});
+		page.drawText(
+			`${dimension}: ${Math.round(dimensionResults[dimension])}%`,
+			{
+				x: 50,
+				y: yPos,
+				size: 20,
+				font: contentFont,
+				color: color
+			}
+		);
 		yPos -= 25;
 	}
 
 	// Total Score
-	page.drawText(`Total Score: ${totalScore}`, {
+	page.drawText(`Total Score: ${totalScore}%`, {
 		x: 50,
 		y: yPos,
 		size: 20,
@@ -223,16 +226,18 @@ function calculateScore(projectData: { [key: string]: string }): ScoreResult {
 	}
 
 	// Aggregate the weighted scores and max scores across all dimensions.
-	let totalRawScore = 0;
-	let totalMaxRawScore = 0;
+	let totalWeightedScore = 0;
+	let totalMaxWeightedScore = 0;
 	for (let dimension in DIMENSIONS) {
-		totalRawScore += weightedScores[dimension] * DIMENSIONS[dimension];
-		totalMaxRawScore +=
+		totalWeightedScore += weightedScores[dimension] * DIMENSIONS[dimension];
+		totalMaxWeightedScore +=
 			maxWeightedScores[dimension] * DIMENSIONS[dimension];
 	}
 
 	// Calculate the overall percentage score for the project based on aggregated values.
-	const totalScore = Math.round((totalRawScore / totalMaxRawScore) * 100);
+	const totalScore = Math.round(
+		(totalWeightedScore / totalMaxWeightedScore) * 100
+	);
 
 	console.log('Raw Scores:', rawScores);
 	console.log('Weighted Scores:', weightedScores);
